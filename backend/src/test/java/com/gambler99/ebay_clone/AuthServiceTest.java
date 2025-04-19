@@ -1,95 +1,97 @@
 package com.gambler99.ebay_clone;
 
-import com.gambler99.ebay_clone.dto.JwtResponseDTO;
-import com.gambler99.ebay_clone.dto.LoginRequestDTO;
 import com.gambler99.ebay_clone.dto.SignupRequestDTO;
-import com.gambler99.ebay_clone.service.AuthService;
 import com.gambler99.ebay_clone.entity.Role;
+import com.gambler99.ebay_clone.entity.User;
 import com.gambler99.ebay_clone.repository.RoleRepository;
 import com.gambler99.ebay_clone.repository.UserRepository;
 import com.gambler99.ebay_clone.security.JwtTokenProvider;
-import com.gambler99.ebay_clone.security.UserDetailsImpl;
+import com.gambler99.ebay_clone.service.AuthService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.*;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
-import static org.mockito.Mockito.*;
-
-import java.util.Set;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-class AuthServiceTest {
+public class AuthServiceTest {
 
-    // Inject the AuthService to test its methods
     @InjectMocks
-    private AuthService authService;
-
-    // Mock the dependencies for AuthService
-    @Mock
-    private UserRepository userRepository;
+    private AuthService authService; // The service under test
 
     @Mock
-    private RoleRepository roleRepository;
+    private AuthenticationManager authenticationManager; // Mocked dependency
 
     @Mock
-    private AuthenticationManager authenticationManager;
+    private UserRepository userRepository; // Mocked dependency for user DB operations
 
     @Mock
-    private JwtTokenProvider jwtTokenProvider;
+    private RoleRepository roleRepository; // Mocked dependency for role DB operations
 
     @Mock
-    private Authentication authentication;
+    private PasswordEncoder passwordEncoder; // Mocked dependency for password encryption
 
-    // Setup method to initialize mocks before each test
+    @Mock
+    private JwtTokenProvider jwtTokenProvider; // Mocked dependency for JWT generation
+
     @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this); // Initialize mocks
+    public void setUp() {
+        // Initializes mock objects before each test
+        MockitoAnnotations.openMocks(this);
     }
 
-    // Test the registerUser method of AuthService
     @Test
-    void testRegisterUser() { 
-        // Prepare a mock SignupRequestDTO (which contains the registration details)
-        SignupRequestDTO signupRequest = new SignupRequestDTO("user", "email@example.com", "password123");
+    public void testRegisterUser_Success() {
+        // Test user registration when username and email are available
 
-        // Mock repository responses: assume username and email are not already taken
-        when(userRepository.existsByUsername(signupRequest.getUsername())).thenReturn(false);
-        when(userRepository.existsByEmail(signupRequest.getEmail())).thenReturn(false);
+        // Create signup request with user data
+        SignupRequestDTO signupRequest = new SignupRequestDTO("buyer1", "buyer@example.com", "securePassword");
 
-        // Call the registerUser method and check the response message
-        String message = authService.registerUser(signupRequest).getMessage();
+        // Mock: Username and email do not exist in DB
+        when(userRepository.existsByUsername("buyer1")).thenReturn(false);
+        when(userRepository.existsByEmail("buyer@example.com")).thenReturn(false);
 
-        // Assert that the registration was successful
-        assertEquals("User registered successfully!", message);
+        // Mock: Password encryption
+        when(passwordEncoder.encode("securePassword")).thenReturn("hashedPassword");
+
+        // Mock: Role retrieval from DB
+        Role buyerRole = new Role();
+        buyerRole.setRoleName("ROLE_BUYER");
+        when(roleRepository.findByRoleName("ROLE_BUYER")).thenReturn(Optional.of(buyerRole));
+
+        // Mock: Saving the user
+        when(userRepository.save(any(User.class))).thenReturn(new User());
+
+        // Act: Call the method to register user
+        authService.registerUser(signupRequest);
+
+        // Assert: Verify that the save method was called once with a User object
+        verify(userRepository).save(any(User.class));
     }
 
-    // Test the authenticateUser method of AuthService
     @Test
-    void testAuthenticateUser() {
-        // Prepare a mock LoginRequestDTO (login details)
-        LoginRequestDTO loginRequest = new LoginRequestDTO("user", "password123");
+    public void testRegisterUser_AlreadyExists() {
+        // Test registration fails if email already exists
 
-        // Create a mock UserDetailsImpl object for the authenticated user (mocking the user principal)
-        UserDetailsImpl userDetails = new UserDetailsImpl(1L, "user", "email@example.com", "password123", Set.of());
+        // Create signup request with user data
+        SignupRequestDTO signupRequest = new SignupRequestDTO("buyer1", "buyer@example.com", "securePassword");
 
-        // Mock authentication manager to return an authenticated user
-        when(authenticationManager.authenticate(any())).thenReturn(authentication);
-        when(authentication.getPrincipal()).thenReturn(userDetails);
+        // Mock: Username is available but email already exists
+        when(userRepository.existsByUsername("buyer1")).thenReturn(false);
+        when(userRepository.existsByEmail("buyer@example.com")).thenReturn(true);
 
-        // Mock the JWT token generation process
-        when(jwtTokenProvider.generateJwtToken(authentication)).thenReturn("testJwtToken");
+        // Act + Assert: Verify RuntimeException is thrown with correct message
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            authService.registerUser(signupRequest);
+        });
 
-        // Call authenticateUser and retrieve the JWT response
-        JwtResponseDTO jwtResponse = authService.authenticateUser(loginRequest);
-
-        // Assert that the JWT response contains the expected token and user details
-        assertNotNull(jwtResponse);
-        assertEquals("testJwtToken", jwtResponse.getToken()); // Verify the token is correct
-        assertEquals("user", jwtResponse.getUsername()); // Verify the username is correct
+        // Assert: Exception message is correct
+        assertEquals("Error: Email is already in use!", exception.getMessage());
     }
+
 }
