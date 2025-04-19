@@ -53,7 +53,7 @@ class AuthServiceTest {
 
     // Test the registerUser method of AuthService
     @Test
-    void testRegisterUser() {
+    void testRegisterUser() { 
         // Prepare a mock SignupRequestDTO (which contains the registration details)
         SignupRequestDTO signupRequest = new SignupRequestDTO("user", "email@example.com", "password123");
 
