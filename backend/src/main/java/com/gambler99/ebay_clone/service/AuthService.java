@@ -6,6 +6,9 @@ import com.gambler99.ebay_clone.dto.MessageResponseDTO;
 import com.gambler99.ebay_clone.dto.SignupRequestDTO;
 import com.gambler99.ebay_clone.entity.Role;
 import com.gambler99.ebay_clone.entity.User;
+import com.gambler99.ebay_clone.exception.EmailAlreadyExistsException;
+import com.gambler99.ebay_clone.exception.RoleNotFoundException;
+import com.gambler99.ebay_clone.exception.UsernameAlreadyExistsException;
 import com.gambler99.ebay_clone.repository.RoleRepository;
 import com.gambler99.ebay_clone.repository.UserRepository;
 
@@ -29,55 +32,61 @@ import java.util.stream.Collectors;
 
 @Service
 public class AuthService {
+    private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AuthenticationManager authenticationManager;
+    private final JwtTokenProvider jwtTokenProvider;
 
     @Autowired
-    private UserRepository userRepository;
+    public AuthService(UserRepository userRepository,
+                       RoleRepository roleRepository,
+                       PasswordEncoder passwordEncoder,
+                       AuthenticationManager authenticationManager,
+                       JwtTokenProvider jwtTokenProvider) {
+        this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.authenticationManager = authenticationManager;
+        this.jwtTokenProvider = jwtTokenProvider;
+    }
 
-    @Autowired
-    private RoleRepository roleRepository;
-
-    // wait for those to be implemented by the team
-    @Autowired
-    private PasswordEncoder passwordEncoder;
-
-    @Autowired
-    private AuthenticationManager authenticationManager;
-
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
     @Transactional
-    public MessageResponseDTO registerUser(SignupRequestDTO signupRequest) {
-        // Check if username exists using the UserRepository
-        if(userRepository.existsByUsername(signupRequest.getUsername())) {
-            return new MessageResponseDTO("Error: Username is already taken!");
+    public void registerUser(SignupRequestDTO signupRequestDTO) {
+        // Check if username exists
+        if (userRepository.existsByUsername(signupRequestDTO.getUsername())) {
+            // Throw specific exception
+            throw new UsernameAlreadyExistsException("Error: Username is already taken!");
         }
 
-        // Check if email exists using the UserRepository
-        if(userRepository.existsByEmail(signupRequest.getEmail())) {
-            return new MessageResponseDTO("Error: Email is already in use!");
+        // Check if email exists
+        if (userRepository.existsByEmail(signupRequestDTO.getEmail())) {
+            // Throw specific exception
+            throw new EmailAlreadyExistsException("Error: Email is already in use!");
         }
 
         // Create a new User object and set its properties
         User user = User.builder()
-                .username(signupRequest.getUsername())
-                .email(signupRequest.getEmail())
-                .passwordHash(passwordEncoder.encode(signupRequest.getPassword()))
+                .username(signupRequestDTO.getUsername())
+                .email(signupRequestDTO.getEmail())
+                .passwordHash(passwordEncoder.encode(signupRequestDTO.getPassword()))
                 .build();
 
         // Set roles for the user
-        Set<String> strRoles = signupRequest.getRoles();
+        Set<String> strRoles = signupRequestDTO.getRoles();
         Set<Role> roles = new HashSet<>();
 
+        final String DEFAULT_ROLE_NAME = "ROLE_BUYER";
+
         if (strRoles == null || strRoles.isEmpty()) {
-            // If no roles specified, assign default BUYER role
-            Role buyerRole = roleRepository.findByRoleName("BUYER")
-                    .orElseThrow(() -> new RuntimeException("Error: Default BUYER role not found."));
+            Role buyerRole = roleRepository.findByRoleName(DEFAULT_ROLE_NAME)
+                    .orElseThrow(() -> new RoleNotFoundException("Error: Default role " + DEFAULT_ROLE_NAME + " not found."));
             roles.add(buyerRole);
         } else {
-            // Process requested roles
-            strRoles.forEach(roleName -> {
-                Role role = roleRepository.findByRoleName(roleName)
-                        .orElseThrow(() -> new RuntimeException("Error: Role " + roleName + " not found."));
+            strRoles.forEach(roleNameInput -> {
+                String roleNameToFind = roleNameInput.startsWith("ROLE_") ? roleNameInput : "ROLE_" + roleNameInput;
+                Role role = roleRepository.findByRoleName(roleNameToFind)
+                        .orElseThrow(() -> new RoleNotFoundException("Error: Role " + roleNameToFind + " not found."));
                 roles.add(role);
             });
         }
@@ -85,15 +94,14 @@ public class AuthService {
         user.setRoles(roles);
         userRepository.save(user);
 
-        return new MessageResponseDTO("User registered successfully!");
     }
 
-    public JwtResponseDTO authenticateUser(LoginRequestDTO loginRequest) {
+    public JwtResponseDTO authenticateUser(LoginRequestDTO loginRequestDTO) {
         // Authenticate user
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                        loginRequest.getUsername(),
-                        loginRequest.getPassword()
+                        loginRequestDTO.getUsername(),
+                        loginRequestDTO.getPassword()
                 )
         );
 
@@ -110,6 +118,11 @@ public class AuthService {
         List<String> roles = userDetails.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.toList());
+
+        // Check if principal is of expected type
+        if (!(authentication.getPrincipal() instanceof UserDetailsImpl)) {
+            throw new IllegalStateException("Unexpected principal type: " + authentication.getPrincipal().getClass());
+        }
 
         // Return JWT response with token, user details, and roles
         return new JwtResponseDTO(
